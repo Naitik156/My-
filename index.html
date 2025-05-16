@@ -1,0 +1,793 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="AI-powered focus timer that uses your camera to detect when you're actually studying">
+    <title>AI Focus Study Timer</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.18.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/blazeface@0.0.7/dist/blazeface.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <style>
+        .flip-digit {
+            perspective: 1000px;
+        }
+        .flip-digit-inner {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            transition: transform 0.6s;
+            transform-style: preserve-3d;
+        }
+        .flip-digit.flipped .flip-digit-inner {
+            transform: rotateX(180deg);
+        }
+        .flip-digit-front, .flip-digit-back {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            backface-visibility: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .flip-digit-back {
+            transform: rotateX(180deg);
+        }
+        #video {
+            transform: scaleX(-1);
+        }
+        #canvas {
+            transform: scaleX(-1);
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+        <header class="mb-12 text-center">
+            <h1 class="text-3xl font-bold mb-2">AI Focus Study Timer</h1>
+            <p class="text-gray-400">Uses your camera to detect when you're actually focused</p>
+        </header>
+
+        <div class="flex flex-col lg:flex-row gap-8">
+            <!-- Main Timer Section -->
+            <div class="lg:w-1/2">
+                <div class="bg-gray-800 rounded-xl p-6 mb-8">
+                    <!-- Status Indicator -->
+                    <div id="statusIndicator" class="px-4 py-2 rounded-full flex items-center gap-2 mb-6 bg-gray-700">
+                        <i class="fas fa-circle-notch fa-spin"></i>
+                        <span>Initializing AI detection...</span>
+                    </div>
+
+                    <!-- Timer Display -->
+                    <div class="flex justify-center mb-8">
+                        <div class="flex items-center justify-center gap-1 text-6xl font-mono">
+                            <div class="flip-digit w-20 h-28 bg-gray-700 rounded-lg flex items-center justify-center relative overflow-hidden">
+                                <div class="flip-digit-inner">
+                                    <div class="flip-digit-front">0</div>
+                                    <div class="flip-digit-back">0</div>
+                                </div>
+                            </div>
+                            <div class="flip-digit w-20 h-28 bg-gray-700 rounded-lg flex items-center justify-center relative overflow-hidden">
+                                <div class="flip-digit-inner">
+                                    <div class="flip-digit-front">0</div>
+                                    <div class="flip-digit-back">0</div>
+                                </div>
+                            </div>
+                            <div class="text-6xl font-bold">:</div>
+                            <div class="flip-digit w-20 h-28 bg-gray-700 rounded-lg flex items-center justify-center relative overflow-hidden">
+                                <div class="flip-digit-inner">
+                                    <div class="flip-digit-front">0</div>
+                                    <div class="flip-digit-back">0</div>
+                                </div>
+                            </div>
+                            <div class="flip-digit w-20 h-28 bg-gray-700 rounded-lg flex items-center justify-center relative overflow-hidden">
+                                <div class="flip-digit-inner">
+                                    <div class="flip-digit-front">0</div>
+                                    <div class="flip-digit-back">0</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Controls -->
+                    <div class="flex justify-center gap-4">
+                        <button id="resetBtn" class="px-6 py-3 bg-gray-700 hover:bg-gray-600 rounded-lg transition">
+                            <i class="fas fa-redo mr-2"></i>Reset
+                        </button>
+                        <button id="settingsBtn" class="px-6 py-3 bg-blue-600 hover:bg-blue-500 rounded-lg transition">
+                            <i class="fas fa-cog mr-2"></i>Settings
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Stats -->
+                <div class="bg-gray-800 rounded-xl p-6">
+                    <h2 class="text-xl font-semibold mb-4">Session Statistics</h2>
+                    <div class="space-y-4">
+                        <div>
+                            <div class="flex justify-between mb-1">
+                                <span class="text-gray-400">Focused Time</span>
+                                <span id="focusedTime" class="font-medium">00:00</span>
+                            </div>
+                            <div class="w-full bg-gray-700 rounded-full h-2.5">
+                                <div id="focusedProgress" class="bg-green-500 h-2.5 rounded-full" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="flex justify-between mb-1">
+                                <span class="text-gray-400">Distracted Time</span>
+                                <span id="distractedTime" class="font-medium">00:00</span>
+                            </div>
+                            <div class="w-full bg-gray-700 rounded-full h-2.5">
+                                <div id="distractedProgress" class="bg-yellow-500 h-2.5 rounded-full" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="flex justify-between mb-1">
+                                <span class="text-gray-400">Away Time</span>
+                                <span id="awayTime" class="font-medium">00:00</span>
+                            </div>
+                            <div class="w-full bg-gray-700 rounded-full h-2.5">
+                                <div id="awayProgress" class="bg-red-500 h-2.5 rounded-full" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Camera Section -->
+            <div class="lg:w-1/2">
+                <div class="bg-gray-800 rounded-xl p-6 mb-8">
+                    <h2 class="text-xl font-semibold mb-4">AI Focus Detection</h2>
+                    <div class="relative">
+                        <video id="video" width="640" height="480" autoplay muted playsinline class="w-full rounded-lg bg-black"></video>
+                        <canvas id="canvas" width="640" height="480" class="absolute top-0 left-0 w-full h-full pointer-events-none"></canvas>
+                    </div>
+                    <div id="detectionDetails" class="mt-4 text-gray-300 text-sm">
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <div class="flex justify-between">
+                                    <span>Head Position:</span>
+                                    <span id="headPosition">--</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span>Eye Contact:</span>
+                                    <span id="eyeContact">--</span>
+                                </div>
+                            </div>
+                            <div>
+                                <div class="flex justify-between">
+                                    <span>Attention Score:</span>
+                                    <span id="attentionScore">--</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span>Detection Confidence:</span>
+                                    <span id="detectionConfidence">--</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Focus Tips -->
+                <div class="bg-gray-800 rounded-xl p-6">
+                    <h2 class="text-xl font-semibold mb-4">Focus Tips</h2>
+                    <div id="focusTips" class="space-y-3">
+                        <div class="flex items-start">
+                            <div class="bg-blue-600 rounded-full p-1 mr-3 mt-1">
+                                <i class="fas fa-lightbulb text-xs"></i>
+                            </div>
+                            <p>Position yourself so your face is clearly visible to the camera</p>
+                        </div>
+                        <div class="flex items-start">
+                            <div class="bg-blue-600 rounded-full p-1 mr-3 mt-1">
+                                <i class="fas fa-lightbulb text-xs"></i>
+                            </div>
+                            <p>Maintain eye contact with your study materials for best detection</p>
+                        </div>
+                        <div class="flex items-start">
+                            <div class="bg-blue-600 rounded-full p-1 mr-3 mt-1">
+                                <i class="fas fa-lightbulb text-xs"></i>
+                            </div>
+                            <p>Timer will automatically pause when you look away</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settingsModal" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 hidden">
+        <div class="bg-gray-800 rounded-xl max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center mb-6">
+                <h3 class="text-xl font-bold">Settings</h3>
+                <button id="closeSettingsBtn" class="text-gray-400 hover:text-white">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            
+            <div class="space-y-6">
+                <div>
+                    <h4 class="text-lg font-medium mb-3">Detection Sensitivity</h4>
+                    <div class="mb-1">Focus Threshold: <span id="sensitivityValue">Medium</span></div>
+                    <input type="range" min="1" max="3" value="2" class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer" id="sensitivitySlider">
+                    <div class="flex justify-between text-xs text-gray-400 mt-1">
+                        <span>Low</span>
+                        <span>Medium</span>
+                        <span>High</span>
+                    </div>
+                </div>
+                
+                <div>
+                    <h4 class="text-lg font-medium mb-3">Notifications</h4>
+                    <div class="space-y-3">
+                        <label class="flex items-center space-x-3">
+                            <input type="checkbox" id="distractionAlerts" class="form-checkbox h-5 w-5 text-blue-600 rounded" checked>
+                            <span>Distraction alerts</span>
+                        </label>
+                        <label class="flex items-center space-x-3">
+                            <input type="checkbox" id="focusRegainedAlerts" class="form-checkbox h-5 w-5 text-blue-600 rounded" checked>
+                            <span>Focus regained alerts</span>
+                        </label>
+                    </div>
+                </div>
+                
+                <div>
+                    <h4 class="text-lg font-medium mb-3">Camera Settings</h4>
+                    <div class="space-y-3">
+                        <div>
+                            <label class="block text-sm font-medium mb-1">Camera</label>
+                            <select id="cameraSelect" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2">
+                                <option value="">Loading cameras...</option>
+                            </select>
+                        </div>
+                        <label class="flex items-center space-x-3">
+                            <input type="checkbox" id="mirrorCamera" class="form-checkbox h-5 w-5 text-blue-600 rounded" checked>
+                            <span>Mirror camera preview</span>
+                        </label>
+                    </div>
+                </div>
+                
+                <button id="saveSettingsBtn" class="w-full py-3 bg-blue-600 hover:bg-blue-500 rounded-lg transition">
+                    Save Settings
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // State management
+        const state = {
+            timer: 0,
+            focusedTime: 0,
+            distractedTime: 0,
+            awayTime: 0,
+            isRunning: false,
+            status: 'away', // 'studying', 'distracted', 'away'
+            lastStatusChange: Date.now(),
+            model: null,
+            faceDetectionInterval: null,
+            timerInterval: null,
+            settings: {
+                sensitivity: 2, // 1=low, 2=medium, 3=high
+                distractionAlerts: true,
+                focusRegainedAlerts: true,
+                mirrorCamera: true
+            },
+            detectionHistory: [],
+            currentFace: null,
+            cameraStream: null
+        };
+
+        // DOM Elements
+        const elements = {
+            statusIndicator: document.getElementById('statusIndicator'),
+            flipDigits: document.querySelectorAll('.flip-digit'),
+            resetBtn: document.getElementById('resetBtn'),
+            settingsBtn: document.getElementById('settingsBtn'),
+            closeSettingsBtn: document.getElementById('closeSettingsBtn'),
+            settingsModal: document.getElementById('settingsModal'),
+            video: document.getElementById('video'),
+            canvas: document.getElementById('canvas'),
+            canvasCtx: document.getElementById('canvas').getContext('2d'),
+            focusedTime: document.getElementById('focusedTime'),
+            distractedTime: document.getElementById('distractedTime'),
+            awayTime: document.getElementById('awayTime'),
+            focusedProgress: document.getElementById('focusedProgress'),
+            distractedProgress: document.getElementById('distractedProgress'),
+            awayProgress: document.getElementById('awayProgress'),
+            sensitivitySlider: document.getElementById('sensitivitySlider'),
+            sensitivityValue: document.getElementById('sensitivityValue'),
+            cameraSelect: document.getElementById('cameraSelect'),
+            mirrorCamera: document.getElementById('mirrorCamera'),
+            distractionAlerts: document.getElementById('distractionAlerts'),
+            focusRegainedAlerts: document.getElementById('focusRegainedAlerts'),
+            saveSettingsBtn: document.getElementById('saveSettingsBtn'),
+            headPosition: document.getElementById('headPosition'),
+            eyeContact: document.getElementById('eyeContact'),
+            attentionScore: document.getElementById('attentionScore'),
+            detectionConfidence: document.getElementById('detectionConfidence')
+        };
+
+        // Event Listeners
+        elements.resetBtn.addEventListener('click', resetTimer);
+        elements.settingsBtn.addEventListener('click', openSettings);
+        elements.closeSettingsBtn.addEventListener('click', closeSettings);
+        elements.saveSettingsBtn.addEventListener('click', saveSettings);
+        elements.sensitivitySlider.addEventListener('input', updateSensitivityDisplay);
+        elements.mirrorCamera.addEventListener('change', toggleCameraMirror);
+
+        // Initialize the application
+        async function init() {
+            await loadModel();
+            await setupCamera();
+            startFaceDetection();
+            updateTimerDisplay();
+            updateStats();
+            updateStatusUI();
+        }
+
+        // Load TensorFlow.js and Blazeface model
+        async function loadModel() {
+            try {
+                updateStatus('Initializing AI model...', 'gray');
+                state.model = await blazeface.load();
+                updateStatus('Model loaded. Starting camera...', 'gray');
+            } catch (error) {
+                console.error('Failed to load model:', error);
+                updateStatus('Failed to load AI model', 'red');
+            }
+        }
+
+        // Set up camera access
+        async function setupCamera() {
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevices = devices.filter(device => device.kind === 'videoinput');
+                
+                if (videoDevices.length === 0) {
+                    throw new Error('No cameras found');
+                }
+                
+                // Populate camera select
+                elements.cameraSelect.innerHTML = '';
+                videoDevices.forEach(device => {
+                    const option = document.createElement('option');
+                    option.value = device.deviceId;
+                    option.text = device.label || `Camera ${elements.cameraSelect.length + 1}`;
+                    elements.cameraSelect.appendChild(option);
+                });
+                
+                // Start with default camera
+                await startCameraStream(videoDevices[0].deviceId);
+                
+            } catch (error) {
+                console.error('Camera error:', error);
+                updateStatus('Camera access denied', 'red');
+            }
+        }
+
+        // Start camera stream
+        async function startCameraStream(deviceId) {
+            if (state.cameraStream) {
+                state.cameraStream.getTracks().forEach(track => track.stop());
+            }
+            
+            try {
+                state.cameraStream = await navigator.mediaDevices.getUserMedia({
+                    video: { 
+                        deviceId: deviceId ? { exact: deviceId } : undefined,
+                        width: { ideal: 640 },
+                        height: { ideal: 480 },
+                        facingMode: 'user'
+                    }
+                });
+                elements.video.srcObject = state.cameraStream;
+                
+                return new Promise((resolve) => {
+                    elements.video.onloadedmetadata = () => {
+                        elements.video.play();
+                        resolve();
+                    };
+                });
+            } catch (error) {
+                console.error('Error starting camera:', error);
+                updateStatus('Failed to start camera', 'red');
+                throw error;
+            }
+        }
+
+        // Toggle camera mirroring
+        function toggleCameraMirror() {
+            const shouldMirror = elements.mirrorCamera.checked;
+            elements.video.style.transform = shouldMirror ? 'scaleX(-1)' : 'scaleX(1)';
+            elements.canvas.style.transform = shouldMirror ? 'scaleX(-1)' : 'scaleX(1)';
+        }
+
+        // Start face detection
+        function startFaceDetection() {
+            state.faceDetectionInterval = setInterval(async () => {
+                if (!state.model) return;
+                
+                try {
+                    // Perform face detection
+                    const predictions = await state.model.estimateFaces(elements.video, false);
+                    
+                    if (predictions.length > 0) {
+                        const face = predictions[0];
+                        state.currentFace = face;
+                        
+                        // Calculate attention metrics
+                        const attentionMetrics = calculateAttentionMetrics(face);
+                        updateDetectionUI(attentionMetrics);
+                        
+                        // Determine focus state based on metrics
+                        determineFocusState(attentionMetrics);
+                        
+                        // Draw face landmarks
+                        drawFaceLandmarks(face);
+                    } else {
+                        state.currentFace = null;
+                        updateDetectionUI(null);
+                        setStatus('away');
+                    }
+                } catch (error) {
+                    console.error('Face detection error:', error);
+                }
+            }, 300); // Run detection 3 times per second
+        }
+
+        // Calculate attention metrics from face data
+        function calculateAttentionMetrics(face) {
+            // Get key landmarks
+            const nose = face.landmarks[2];  // Nose tip
+            const leftEye = face.landmarks[0]; // Left eye
+            const rightEye = face.landmarks[1]; // Right eye
+            
+            // Calculate head position (tilt)
+            const eyeMidpoint = {
+                x: (leftEye[0] + rightEye[0]) / 2,
+                y: (leftEye[1] + rightEye[1]) / 2
+            };
+            
+            const verticalRatio = Math.abs(nose[1] - eyeMidpoint.y) / 
+                                Math.abs(leftEye[0] - rightEye[0]);
+            
+            // Calculate eye openness (simple approximation)
+            const leftEyeOpenness = Math.sqrt(
+                Math.pow(face.landmarks[3][0] - face.landmarks[5][0], 2) + 
+                Math.pow(face.landmarks[3][1] - face.landmarks[5][1], 2)
+            );
+            
+            const rightEyeOpenness = Math.sqrt(
+                Math.pow(face.landmarks[4][0] - face.landmarks[6][0], 2) + 
+                Math.pow(face.landmarks[4][1] - face.landmarks[6][1], 2)
+            );
+            
+            const avgEyeOpenness = (leftEyeOpenness + rightEyeOpenness) / 2;
+            
+            // Calculate attention score (0-100)
+            let attentionScore = 100;
+            
+            // Penalize for looking away (head position)
+            if (verticalRatio < 0.2 || verticalRatio > 0.6) {
+                attentionScore -= 40;
+            }
+            
+            // Penalize for eyes closed
+            if (avgEyeOpenness < 10) {
+                attentionScore -= 30;
+            }
+            
+            // Ensure score is within bounds
+            attentionScore = Math.max(0, Math.min(100, attentionScore));
+            
+            return {
+                headPosition: verticalRatio.toFixed(2),
+                eyeOpenness: avgEyeOpenness.toFixed(1),
+                attentionScore: Math.round(attentionScore),
+                confidence: face.probability[0].toFixed(2)
+            };
+        }
+
+        // Determine focus state based on attention metrics
+        function determineFocusState(metrics) {
+            if (!metrics) {
+                setStatus('away');
+                return;
+            }
+            
+            const { attentionScore } = metrics;
+            let threshold;
+            
+            // Adjust threshold based on sensitivity setting
+            switch (state.settings.sensitivity) {
+                case 1: threshold = 60; break; // Low sensitivity
+                case 3: threshold = 80; break; // High sensitivity
+                default: threshold = 70; // Medium sensitivity
+            }
+            
+            if (attentionScore >= threshold) {
+                setStatus('studying');
+            } else if (attentionScore >= 30) {
+                setStatus('distracted');
+            } else {
+                setStatus('away');
+            }
+        }
+
+        // Draw face landmarks on canvas
+        function drawFaceLandmarks(face) {
+            // Clear canvas
+            elements.canvasCtx.clearRect(0, 0, elements.canvas.width, elements.canvas.height);
+            
+            // Draw bounding box
+            elements.canvasCtx.strokeStyle = state.status === 'studying' ? '#10B981' : 
+                                            state.status === 'distracted' ? '#F59E0B' : '#EF4444';
+            elements.canvasCtx.lineWidth = 2;
+            elements.canvasCtx.strokeRect(
+                face.topLeft[0], face.topLeft[1],
+                face.bottomRight[0] - face.topLeft[0],
+                face.bottomRight[1] - face.topLeft[1]
+            );
+            
+            // Draw landmarks
+            elements.canvasCtx.fillStyle = '#3B82F6';
+            face.landmarks.forEach(landmark => {
+                elements.canvasCtx.beginPath();
+                elements.canvasCtx.arc(landmark[0], landmark[1], 2, 0, 2 * Math.PI);
+                elements.canvasCtx.fill();
+            });
+        }
+
+        // Update detection UI with metrics
+        function updateDetectionUI(metrics) {
+            if (!metrics) {
+                elements.headPosition.textContent = '--';
+                elements.eyeContact.textContent = '--';
+                elements.attentionScore.textContent = '--';
+                elements.detectionConfidence.textContent = '--';
+                return;
+            }
+            
+            elements.headPosition.textContent = metrics.headPosition;
+            elements.eyeContact.textContent = metrics.eyeOpenness;
+            elements.attentionScore.textContent = `${metrics.attentionScore}%`;
+            elements.detectionConfidence.textContent = metrics.confidence;
+        }
+
+        // Set the current status
+        function setStatus(newStatus) {
+            if (state.status === newStatus) return;
+            
+            // Calculate time spent in previous state
+            const now = Date.now();
+            const timeDiff = Math.floor((now - state.lastStatusChange) / 1000);
+            
+            // Update time counters
+            switch (state.status) {
+                case 'studying': state.focusedTime += timeDiff; break;
+                case 'distracted': state.distractedTime += timeDiff; break;
+                case 'away': state.awayTime += timeDiff; break;
+            }
+            
+            // Update state
+            state.status = newStatus;
+            state.lastStatusChange = now;
+            
+            // Update UI
+            updateStatusUI();
+            updateStats();
+            
+            // Control timer
+            if (newStatus === 'studying' && !state.isRunning) {
+                startTimer();
+            } else if ((newStatus === 'distracted' || newStatus === 'away') && state.isRunning) {
+                stopTimer();
+            }
+            
+            // Show notifications if enabled
+            if (state.settings.distractionAlerts && newStatus === 'distracted') {
+                showNotification('Distraction detected!');
+            }
+            
+            if (state.settings.focusRegainedAlerts && newStatus === 'studying' && state.status !== 'studying') {
+                showNotification('Focus regained!');
+            }
+        }
+
+        // Update status UI
+        function updateStatusUI() {
+            let statusText, statusColor, icon;
+            
+            switch (state.status) {
+                case 'studying':
+                    statusText = 'Focused - Keep going!';
+                    statusColor = 'bg-green-600';
+                    icon = 'fas fa-book-open';
+                    break;
+                case 'distracted':
+                    statusText = 'Distracted - Please focus';
+                    statusColor = 'bg-yellow-600';
+                    icon = 'fas fa-eye';
+                    break;
+                case 'away':
+                    statusText = 'Away - Return to study';
+                    statusColor = 'bg-red-600';
+                    icon = 'fas fa-user-slash';
+                    break;
+                default:
+                    statusText = 'Initializing...';
+                    statusColor = 'bg-gray-600';
+                    icon = 'fas fa-circle-notch fa-spin';
+            }
+            
+            elements.statusIndicator.className = `${statusColor} px-4 py-2 rounded-full flex items-center gap-2 mb-6 transition-colors`;
+            elements.statusIndicator.innerHTML = `<i class="${icon}"></i><span>${statusText}</span>`;
+        }
+
+        // Show browser notification
+        function showNotification(message) {
+            if (!('Notification' in window)) return;
+            
+            if (Notification.permission === 'granted') {
+                new Notification(message);
+            } else if (Notification.permission !== 'denied') {
+                Notification.requestPermission().then(permission => {
+                    if (permission === 'granted') {
+                        new Notification(message);
+                    }
+                });
+            }
+        }
+
+        // Start the timer
+        function startTimer() {
+            if (!state.isRunning) {
+                state.isRunning = true;
+                state.timerInterval = setInterval(() => {
+                    state.timer++;
+                    updateTimerDisplay();
+                }, 1000);
+            }
+        }
+
+        // Stop the timer
+        function stopTimer() {
+            clearInterval(state.timerInterval);
+            state.isRunning = false;
+        }
+
+        // Reset the timer
+        function resetTimer() {
+            stopTimer();
+            state.timer = 0;
+            state.focusedTime = 0;
+            state.distractedTime = 0;
+            state.awayTime = 0;
+            updateTimerDisplay();
+            updateStats();
+            setStatus('away');
+        }
+
+        // Update timer display with flip animation
+        function updateTimerDisplay() {
+            const minutes = Math.floor(state.timer / 60);
+            const seconds = state.timer % 60;
+            const timeString = `${minutes.toString().padStart(2, '0')}${seconds.toString().padStart(2, '0')}`;
+            
+            // Update each digit with flip animation
+            for (let i = 0; i < elements.flipDigits.length; i++) {
+                if (i === 2) continue; // Skip the colon
+                
+                const currentDigit = elements.flipDigits[i].querySelector('.flip-digit-front').textContent;
+                const newDigit = timeString[i > 2 ? i-1 : i];
+                
+                if (currentDigit !== newDigit) {
+                    elements.flipDigits[i].querySelector('.flip-digit-back').textContent = newDigit;
+                    elements.flipDigits[i].classList.add('flipped');
+                    
+                    setTimeout(() => {
+                        elements.flipDigits[i].querySelector('.flip-digit-front').textContent = newDigit;
+                        elements.flipDigits[i].classList.remove('flipped');
+                    }, 600);
+                }
+            }
+        }
+
+        // Update statistics display
+        function updateStats() {
+            const totalTime = state.focusedTime + state.distractedTime + state.awayTime;
+            
+            elements.focusedTime.textContent = formatTime(state.focusedTime);
+            elements.distractedTime.textContent = formatTime(state.distractedTime);
+            elements.awayTime.textContent = formatTime(state.awayTime);
+            
+            if (totalTime > 0) {
+                elements.focusedProgress.style.width = `${(state.focusedTime / totalTime) * 100}%`;
+                elements.distractedProgress.style.width = `${(state.distractedTime / totalTime) * 100}%`;
+                elements.awayProgress.style.width = `${(state.awayTime / totalTime) * 100}%`;
+            } else {
+                elements.focusedProgress.style.width = '0%';
+                elements.distractedProgress.style.width = '0%';
+                elements.awayProgress.style.width = '0%';
+            }
+        }
+
+        // Format time as MM:SS
+        function formatTime(seconds) {
+            const mins = Math.floor(seconds / 60);
+            const secs = seconds % 60;
+            return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        // Settings functions
+        function openSettings() {
+            elements.settingsModal.classList.remove('hidden');
+            stopTimer();
+        }
+
+        function closeSettings() {
+            elements.settingsModal.classList.add('hidden');
+            if (state.status === 'studying') {
+                startTimer();
+            }
+        }
+
+        function saveSettings() {
+            state.settings = {
+                sensitivity: parseInt(elements.sensitivitySlider.value),
+                distractionAlerts: elements.distractionAlerts.checked,
+                focusRegainedAlerts: elements.focusRegainedAlerts.checked,
+                mirrorCamera: elements.mirrorCamera.checked
+            };
+            
+            // Apply camera mirror setting immediately
+            toggleCameraMirror();
+            
+            closeSettings();
+        }
+
+        function updateSensitivityDisplay() {
+            const sensitivity = parseInt(elements.sensitivitySlider.value);
+            let sensitivityText;
+            
+            if (sensitivity === 1) {
+                sensitivityText = 'Low';
+            } else if (sensitivity === 2) {
+                sensitivityText = 'Medium';
+            } else {
+                sensitivityText = 'High';
+            }
+            
+            elements.sensitivityValue.textContent = sensitivityText;
+        }
+
+        // Initialize the app
+        document.addEventListener('DOMContentLoaded', () => {
+            // Request notification permission
+            if ('Notification' in window) {
+                Notification.requestPermission();
+            }
+            
+            init();
+        });
+
+        // Clean up on page unload
+        window.addEventListener('beforeunload', () => {
+            if (state.cameraStream) {
+                state.cameraStream.getTracks().forEach(track => track.stop());
+            }
+            if (state.faceDetectionInterval) {
+                clearInterval(state.faceDetectionInterval);
+            }
+            if (state.timerInterval) {
+                clearInterval(state.timerInterval);
+            }
+        });
+    </script>
+</body>
+</html>
